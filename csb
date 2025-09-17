@@ -2,14 +2,15 @@
   #=================================================
   # Project: csb // ConzZah's-Shizuku-Bootstrapper
   # Author: ConzZah // (c) 2025
-  # Last Modification: 17.09.2025 // 05:15 [v0.2]
+  # Last Modification: 17.09.2025 // 10:37 [v0.2]
   #=================================================
-clear; [[ "$1" =~ ^("v"|"-v"|"--verbose")$ ]] && set -x && shift
-adb="adb"; pt="platform-tools"; ptl="$pt-latest-linux.zip"
-shizuku="moe.shizuku.privileged.api"; args="$*"
+clear; args="$*"; shizuku="moe.shizuku.privileged.api"
 s="== SUCCESS =="; f="xX FAILURE Xx"
-logo () {
-shizuku_logo='
+[[ "$1" =~ ^("v"|"-v"|"--verbose")$ ]] && \
+set -x && export v="v" && shift; 
+adb="adb"; pt="platform-tools"
+ptl="$pt-latest-linux.zip"
+logo () { shizuku_logo='
                .:::::::::::.
            .::=+####%######+=:-.
          .-+###################+=.@
@@ -115,16 +116,20 @@ termux="y"; adb="termux-adb"
 cmd package list packages -3| { ! grep -q 'termux.api' ;} && \
 echo -e "--> ERROR: TERMUX API NOT FOUND, PLS INSTALL IT FROM F-DROID." && exit 1
 ## get termux-adb (all credit to nohajc for that) 
-apt-cache show "$adb"| { ! grep -q "$adb" ;} && \
-curl -sLO https://raw.githubusercontent.com/nohajc/termux-adb/master/install.sh && bash install.sh
+! command -v "$adb" >/dev/null && \
+curl -#LO https://raw.githubusercontent.com/nohajc/termux-adb/master/install.sh && \
+sed -i 's#apt install#apt install -yy#g' install.sh && \
+### sets nohajc's repo as trusted (reasoning: gpg errors that are preventing the install 70% of the time, i don't know why, and i'm too tired to find out)
+tr="https://nohajc.github.io termux extras" && sed -i "s#deb $tr#deb [trusted=yes] $tr#g" install.sh && bash install.sh
 ## install neccessary packages
-deps="termux-api fakeroot libusb"; for dep in $deps; do
-apt-cache show "$dep"| { ! grep -q "$dep" ;} && apt install -yy "$dep"; done 
+! command -v "fakeroot" >/dev/null && apt install -yy "fakeroot"
+[ ! "$(ls "$PREFIX/lib/libusb"*)" ] && apt install -yy libusb
+[ ! -f "$PREFIX/bin/termux-api-start" ] && apt install -yy termux-api
+fr="fakeroot exec bash $0 $args"; fr="$(echo "$fr"| tr -s ' ')" 
 ## relaunch with fakeroot is needed ## https://github.com/nohajc/termux-adb/issues/6 ##
-env| { ! grep -q "fakeroot" && export ANDROID_NO_USE_FWMARK_CLIENT=1 && fakeroot exec bash csb "$args" && exit "$?" ;} ;}
+env| { ! grep -q "fakeroot" ;} && export ANDROID_NO_USE_FWMARK_CLIENT=1 && $fr && exit "$?" ;}
 
 #### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH ####
-
 check4termux; logo; [ -z "$1" ] && { check4adb; connect2device; check4shizuku; exit "$?" ;} ## <-- if launched without args
 [[ "$1" =~ ^("-d"|"d"|"--daemon"|"--spawn-daemon")$ ]] && d="s" && { kill_daemon; spawn_daemon & exit "$?" ;} # <-- awakes demons
 [[ "$1" =~ ^("-k"|"k"|"--kill-daemon")$ ]] && { d="k"; kill_daemon; exit "$?" ;} ## <-- banishes demons
