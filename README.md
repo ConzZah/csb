@@ -1,6 +1,6 @@
 # ConzZah's Shizuku Bootstrapper
 
-![v0.2](https://i.imgur.com/YPTmqmO.png)
+![v0.3](https://i.imgur.com/0Xn1JEG.png)
 
 #### FEATURES ####
 
@@ -11,5 +11,7 @@
 - can run on termux
 
 ![demo](https://i.ibb.co/7tFSvDSw/gif.gif)
+
+**Special Thanks and Credits to @nohajc for termux-adb**
 
 **Cheers, ConzZah**

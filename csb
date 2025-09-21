@@ -2,14 +2,21 @@
   #=================================================
   # Project: csb // ConzZah's-Shizuku-Bootstrapper
   # Author: ConzZah // (c) 2025
-  # Last Modification: 17.09.2025 // 10:37 [v0.2]
+  # Last Modification: 21.09.2025 // 20:06 [v0.3]
   #=================================================
-clear; args="$*"; shizuku="moe.shizuku.privileged.api"
-s="== SUCCESS =="; f="xX FAILURE Xx"
+# shellcheck disable=SC2009 # disabled because pgrep had too many non-portable options
+# shellcheck disable=SC2086 # disabled because kill doesn't seem to like quoted vars lol
+## check if running on termux & set var if true.
+clear; export shizuku="moe.shizuku.privileged.api"
+[ -z "$og_pid" ] && export og_pid="$BASHPID"
+[ -n "$TERMUX_APP_PID" ] && export T="y"
 [[ "$1" =~ ^("v"|"-v"|"--verbose")$ ]] && \
-set -x && export v="v" && shift; 
+set -x && export v="v" && shift
 adb="adb"; pt="platform-tools"
+pid="$$"; export args="$*"
 ptl="$pt-latest-linux.zip"
+s="== SUCCESS =="
+f="xX FAILURE Xx"
 logo () { shizuku_logo='
                .:::::::::::.
            .::=+####%######+=:-.
@@ -31,12 +38,11 @@ logo () { shizuku_logo='
       @  .=============.@@%##%#%#*=:@
         @   ==========- @######*=:@@
               =========..@##*=--:@
-              @ . v0.2 :: @+--:@@'
+              @ . v0.3 :: @+--:@@'
 echo -e "$shizuku_logo\n\n    == ConzZah's-Shizuku-Bootstrapper ==\n" ;}
-
 check4adb () {
 ## if adb is not installed, download platform-tools
-[ -n "$termux" ] && return 0
+[ -n "$T" ] && return 0
 doso=""; _su="sudo doas"; for su in $_su; do
 command -v "$su" >/dev/null && doso="$su" && break; done
 [ -z "$x" ] && command -v $adb >/dev/null && return 0 || echo -e "--> DOWNLOADING ${pt^^}..\n"
@@ -55,31 +61,19 @@ $doso install "$tool" /usr/bin; done
 connect2device () {
 ## waits for a device to connect
 echo -e "--> STARTING ADB..\n"
-command -v $adb >/dev/null && $adb start-server >/dev/null && \
+command -v $adb >/dev/null && $adb start-server >/dev/null 2>&1 && \
 echo -e "\n--> WAITING FOR DEVICE TO CONNECT..\n" || exit 1
 dev=""; until [ -n "$dev" ]; do $adb wait-for-device >/dev/null
 dev="$($adb get-serialno | head -n1)"; done
 echo -e "--> FOUND DEVICE: $dev <--"
-## get the devices architecture:
-dev_arch="$($adb shell /system/bin/uname -m)"
-[ "$dev_arch" = "aarch64" ] &&  dev_arch="arm64"
-[ "$dev_arch" = "armv7l" ] && dev_arch="arm"
+devarch
 }
 
-check4shizuku () {
-## checks for existing shizuku install
-echo -e "\n--> CHECKING IF SHIZUKU IS INSTALLED..\n"
-local_shizuku=""; local_shizuku="$([ -n "$dev" ] && $adb shell "dumpsys package packages"| grep "$shizuku")"
-[ -z "$local_shizuku" ] && { dl_shizuku && start_shizuku ;}
-[ -n "$local_shizuku" ] && echo -e "--> SHIZUKU FOUND, STARTING..\n" && \
-start_shizuku ;}
-
-start_shizuku () {
-## starts shizuku
-shizuku_codepath="$(echo "$local_shizuku" | grep -o 'codePath.*'| cut -d '=' -f 2-)"
-$adb shell "$shizuku_codepath/lib/$dev_arch/libshizuku.so" && \
-[ "$d" = "s"  ] && return "$?" || \
-echo -e "\n$s\n" || echo -e "\n$f\n" && exit "$?"
+devarch () {
+## get the arch of the connected device
+dev_arch="$($adb shell /system/bin/uname -m)"
+[ "$dev_arch" = "aarch64" ] &&  export dev_arch="arm64"
+[ "$dev_arch" = "armv7l" ] && export dev_arch="arm"
 }
 
 dl_shizuku () {
@@ -90,49 +84,71 @@ grep "moe.*.apk"| cut -d "'" -f 4| cut -d / -f 4)"
 ## download & install shizuku
 [ ! -f "$apk" ] && echo -e "\n--> DOWNLOADING SHIZUKU..\n" && \
 curl -#LO "https://apt.izzysoft.de/fdroid/repo/$apk" && \
-[ -z "$x" ] && echo -e "\n--> INSTALLING SHIZUKU..\n" && \
+[ -f "$apk" ] && echo -e "\n--> INSTALLING SHIZUKU..\n" && \
 $adb install "$apk" && rm "$apk" && check4shizuku || \
-echo -e "--> SHIZUKU INSTALL FAILED!\n" && exit 1
-}
+echo -e "--> SHIZUKU INSTALL FAILED!\n" && exit 1 ;}
+
+check4shizuku () {
+## checks for existing shizuku install
+echo -e "\n--> CHECKING IF SHIZUKU IS INSTALLED..\n"
+[ -n "$dev" ] && local_shizuku="$($adb shell "dumpsys package packages"| grep "$shizuku")"
+[ -z "$local_shizuku" ] && { dl_shizuku && start_shizuku ;}
+[ -n "$local_shizuku" ] && echo -e "--> SHIZUKU FOUND, STARTING..\n" && \
+start_shizuku ;}
+
+start_shizuku () {
+## starts shizuku
+shizuku_codepath="$(echo "$local_shizuku" | grep -o 'codePath.*'| cut -d '=' -f 2-)"
+$adb shell "$shizuku_codepath/lib/$dev_arch/libshizuku.so" && \
+[ "$d" = "s"  ] && return "$?" || \
+echo -e "\n$s\n" || echo -e "\n$f\n"
+# disconnect if coming from on_device_bootstrap
+[ -n "$wdp" ] && $adb disconnect "127.0.0.1:$wdp"; exit "$?" ;}
+
+prep_termux () {
+export adb="termux-adb"
+## check for termux-api
+cmd package list packages -3| { ! grep -q 'termux.api' ;} && \
+echo -e "--> ERROR: TERMUX API NOT FOUND, PLS INSTALL IT FROM F-DROID." && exit 1
+## get termux-adb (all credit to nohajc for that)
+! command -v "$adb" >/dev/null && \
+curl -#LO https://raw.githubusercontent.com/nohajc/termux-adb/master/install.sh && \
+sed -i 's#apt install#apt install -yy#g' install.sh && \
+### sets nohajc's repo as trusted (reasoning: gpg errors that are preventing the install 70% of the time, i don't know why, and i'm too tired to find out)
+tr="https://nohajc.github.io termux extras" && sed -i "s#deb $tr#deb [trusted=yes] $tr#g" install.sh && bash install.sh && rm install.sh
+## install neccessary packages
+! command -v "fakeroot" >/dev/null && apt install -yy "fakeroot"
+! command -v "ip" >/dev/null && apt install -yy "iproute2"
+[ ! "$(ls "$PREFIX/lib/libusb"*)" ] && apt install -yy libusb
+[ ! -f "$PREFIX/bin/termux-api-start" ] && apt install -yy termux-api
+## kill all existing fakeroot instances BEFORE we enter fakeroot 
+[ -z "$fr" ] && pkill -f "$PREFIX/bin/faked"
+## relaunch with fakeroot (is needed ## https://github.com/nohajc/termux-adb/issues/6) ##
+export fr="1"; export _t="y"; export ANDROID_NO_USE_FWMARK_CLIENT=1
+exec fakeroot bash "$0" "$args"; exit "$?" ;}
 
 ## demonic stuff ## demonic stuff ## demonic stuff ## demonic stuff ## demonic stuff ## demonic stuff ## demonic stuff ## demonic stuff ##
 spawn_daemon () { echo -e "--> DAEMON SPAWNED.\n" ## awake the demon ##
 until [ "$x" != "$x" ]; do { check4adb >/dev/null; connect2device >/dev/null; check4shizuku >/dev/null; sleep 7 ;} done ;}
 
-# shellcheck disable=SC2009 # disabled because pgrep has too many non-portable options, this approach however, is portable.
-# shellcheck disable=SC2086 # disabled because kill doesn't seem to like quoted vars lol
-
 kill_daemon () { ## banish the demon ##
-ps="$(ps aux| grep 'bash*.*csb'| grep -v '.*grep.*'| sed "s#$BASHPID##g")"
-old_daemons="$(echo "$ps"| tr -s ' '| cut -d ' ' -f 2| head -n1| tr '\n' ' '| sed "s#$$##g"| tr -s ' '| sed -e 's#^[[:space:]]$##g')"
-[ -n "$old_daemons" ] && kill -9 $old_daemons && echo -e "--> OLD DAEMON KILLED.\n" && return 0 || \
-echo -e "--> NO DAEMON RUNNING.\n" && return 0 ;}
+od="$(ps a| grep "$0"| grep -v 'grep'| tr '\n' ' '| tr -s ' '| sed 's#^ ##g'| cut -d ' ' -f 1| sed 's# $##g'| grep -v "$pid"| grep -v "$og_pid")"
+[ -n "$od" ] && kill -9 $od && echo -e "--> OLD DAEMON KILLED.\n" && \
+adb_zombies="$(ps ax | grep adb| grep -v grep| tr -s ' '| sed 's#^ ##g'| cut -d ' ' -f 1| tr '\n' ' ')"
+[ -n "$adb_zombies" ] && kill -9 $adb_zombies && return 0 || echo -e "--> NO DAEMON RUNNING.\n" && return 0 ;}
 
-check4termux () {
-## checks if we're running on termux
-[ -z "$TERMUX_APP_PID" ] && return 0
-termux="y"; adb="termux-adb"
-## check for termux-api
-cmd package list packages -3| { ! grep -q 'termux.api' ;} && \
-echo -e "--> ERROR: TERMUX API NOT FOUND, PLS INSTALL IT FROM F-DROID." && exit 1
-## get termux-adb (all credit to nohajc for that) 
-! command -v "$adb" >/dev/null && \
-curl -#LO https://raw.githubusercontent.com/nohajc/termux-adb/master/install.sh && \
-sed -i 's#apt install#apt install -yy#g' install.sh && \
-### sets nohajc's repo as trusted (reasoning: gpg errors that are preventing the install 70% of the time, i don't know why, and i'm too tired to find out)
-tr="https://nohajc.github.io termux extras" && sed -i "s#deb $tr#deb [trusted=yes] $tr#g" install.sh && bash install.sh
-## install neccessary packages
-! command -v "fakeroot" >/dev/null && apt install -yy "fakeroot"
-[ ! "$(ls "$PREFIX/lib/libusb"*)" ] && apt install -yy libusb
-[ ! -f "$PREFIX/bin/termux-api-start" ] && apt install -yy termux-api
-fr="fakeroot exec bash $0 $args"; fr="$(echo "$fr"| tr -s ' ')" 
-## relaunch with fakeroot is needed ## https://github.com/nohajc/termux-adb/issues/6 ##
-env| { ! grep -q "fakeroot" ;} && export ANDROID_NO_USE_FWMARK_CLIENT=1 && $fr && exit "$?" ;}
+logo  ##///~~~~~~~~~~~~ END OF FUNCTIONS ~~~~~~~~~~~~\\\##
 
-#### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH #### LAUNCH ####
-check4termux; logo; [ -z "$1" ] && { check4adb; connect2device; check4shizuku; exit "$?" ;} ## <-- if launched without args
-[[ "$1" =~ ^("-d"|"d"|"--daemon"|"--spawn-daemon")$ ]] && d="s" && { kill_daemon; spawn_daemon & exit "$?" ;} # <-- awakes demons
-[[ "$1" =~ ^("-k"|"k"|"--kill-daemon")$ ]] && { d="k"; kill_daemon; exit "$?" ;} ## <-- banishes demons
+## wake the demon ##
+[[ "$1" =~ ^("-d"|"d"|"--daemon"|"--spawn-daemon")$ ]] && \
+{ export d="s"; kill_daemon; [ -n "$T" ] && prep_termux; spawn_daemon & [ -n "$_t" ] && export _t=""; exit "$?" ;}
+## banish the demon ##
+[[ "$1" =~ ^("-k"|"k"|"--kill-daemon")$ ]] && \
+{ export d="k"; kill_daemon; exit "$?" ;}
+## demonic stuff ## demonic stuff ## demonic stuff ## demonic stuff ## demonic stuff ## demonic stuff ## demonic stuff ## demonic stuff ##
+
+[ -n "$T" ] && [ -z "$_t" ] && prep_termux ## <-- makes sure we don't end up in nested fakeroot
+[ -z "$1" ] && { check4adb; connect2device; check4shizuku; [ -n "$_t" ] && export _t=""; exit "$?" ;} ## <-- if launched without args
 [ "$1" = "-apk" ] && { x="y" && dl_shizuku && exit "$?" ;} ## <-- downloads latest shizuku apk
 [ "$1" = "-adb" ] && { x="y" && check4adb && exit "$?" ;} ## <-- downloads platform-tools
-[ -z "$1" ] || [ -n "$1" ] || [[ "$1" =~ ^("-h"|"h"|"--help")$ ]] && echo -e "USAGE: bash csb [OPTION]\n\nOPTIONS:\n\n-v\t\tBE VERBOSE\n-d\t\tAWAKE THE DAEMON\n-k\t\tKILL THE RUNNING DAEMON\n-adb\t\tDOWNLOADS ${pt^^}\n-apk\t\tDOWNLOADS THE LATEST SHIZUKU APK\n"
+[ -z "$1" ] || [ -n "$1" ] || [[ "$1" =~ ^("-h"|"h"|"--help")$ ]] && echo -e "USAGE: bash csb [OPTION]\n\nOPTIONS:\n\n-v\t\tBE VERBOSE\n-d\t\tWAKE DAEMON\n-k\t\tKILL DAEMON\n-adb\t\tDOWNLOAD ${pt^^}\n-apk\t\tDOWNLOAD THE LATEST SHIZUKU APK\n"
